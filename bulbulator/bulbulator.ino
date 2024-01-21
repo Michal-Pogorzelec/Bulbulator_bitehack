@@ -8,17 +8,25 @@
 #include <Servo.h>
 
 /* DEFINES */
+#define HIGH_ANALOG (255)
+#define STEP_PERIOD (50)
+#define TURNING_TIME (2000)
+#define TURNING_STEP (100)
+#define KARETKA_TIME (2000)
+#define LAST_BULB_INDEX (4)
+#define TURNING_ITERS (5)
+
 #define IDLE (0)
 #define START_CHECKING (1)
 #define MOVE_FORWARD (3)
 #define PULL_BULB (4)
 #define GO_BACKWARD (5)
 #define EXCHANGE_BULB (6)
-#define GET_BACK_TO_BROKEN_BULB (7)
-#define REPLACING_BULB (8)
+#define GET_NEW_BULB (7)
+#define GET_BACK_TO_BROKEN_BULB (8)
+#define REPLACING_BULB (9)
 #define GET_BACK_TO_BASE (10)
 
-#define LAST_BULB_INDEX (5)
 
 /* WEBSOCKET */
 // settings for a test on postman.com's websocket echo server
@@ -46,24 +54,27 @@ const int rightLimitSwitchPin = 13;
 const int engine1_PIN1 = 2;
 const int engine1_PIN2 = 3;
 
-const int engine2_PIN1 = 8;
-const int engine2_PIN2 = 9;
+const int engine2_PIN1 = engine1_PIN1;
+const int engine2_PIN2 = engine1_PIN2;
 
-/* KARETKA ENGINES */
-const int karetkaEngine_PIN1;
-const int karetkaEngine_PIN2;
+const int karetkaEngine_PIN1 = A2;
+const int karetkaEngine_PIN2 = A3;
 
-const int bulbTurnEngine_PIN1;
-const int bulbTurnEngine_PIN2;
+const int bulbTurnEngine_PIN1 = A4;
+const int bulbTurnEngine_PIN2 = A5;
 
 /* GENERAL */
+const int fotoresistorPIN = A0;
+const int tcrt5000PIN = A1;
 // message sending interval, in ms:
 int interval = 3000;
 // last time a message was sent, in ms:
 long lastSend = 0;
 int Status;
 int internalState = IDLE;
-int bulbIndex = 0;
+int currentBulbIndex = -1;
+int backBulbIndex = -1;
+int goingToBaseBulbIndex = -1;
 bool lastBulbCheck = false;
 int bulbsChecked[LAST_BULB_INDEX] = {0};
 
@@ -76,25 +87,167 @@ void moveForward() {
   digitalWrite(engine1_PIN1, HIGH);
   digitalWrite(engine1_PIN2, LOW);
 
-  digitalWrite(engine2_PIN1, HIGH);
-  digitalWrite(engine2_PIN2, LOW);
+  // digitalWrite(engine2_PIN1, HIGH);
+  // digitalWrite(engine2_PIN2, LOW);
 }
 
 void moveBackward() {
   digitalWrite(engine1_PIN1, LOW);
   digitalWrite(engine1_PIN2, HIGH);
 
-  digitalWrite(engine2_PIN1, LOW);
-  digitalWrite(engine2_PIN2, HIGH);
+  // digitalWrite(engine2_PIN1, LOW);
+  // digitalWrite(engine2_PIN2, HIGH);
 }
 
 void stopMoving() {
   digitalWrite(engine1_PIN1, LOW);
   digitalWrite(engine1_PIN2, LOW);
 
-  digitalWrite(engine2_PIN1, LOW);
-  digitalWrite(engine2_PIN2, LOW);
+  // digitalWrite(engine2_PIN1, LOW);
+  // digitalWrite(engine2_PIN2, LOW);
 }
+
+void turnBulbOutEngine() {
+  digitalWrite(bulbTurnEngine_PIN1, HIGH);
+  digitalWrite(bulbTurnEngine_PIN2, LOW);
+}
+
+void turnBulbInEngine() {
+  digitalWrite(bulbTurnEngine_PIN1, LOW);
+  digitalWrite(bulbTurnEngine_PIN2, HIGH);
+}
+
+void stopTurning() {
+  digitalWrite(bulbTurnEngine_PIN1, LOW);
+  digitalWrite(bulbTurnEngine_PIN2, LOW);
+}
+
+void moveKaretkaOut() {
+  digitalWrite(karetkaEngine_PIN1, HIGH);
+  digitalWrite(karetkaEngine_PIN2, LOW);
+}
+
+void moveKaretkaIn() {
+  digitalWrite(karetkaEngine_PIN1, LOW);
+  digitalWrite(karetkaEngine_PIN2, HIGH);
+}
+
+void stopKaretka() {
+  digitalWrite(karetkaEngine_PIN1, LOW);
+  digitalWrite(karetkaEngine_PIN2, LOW);
+}
+
+void grabBulb() {
+  int leftLimitSwitchRead = LOW;
+  int rightLimitSwitchRead = LOW;
+  bool touched;
+  do {
+    if (leftLimitSwitchRead == LOW) {
+      leftServoAngle++;
+      leftServo.write(leftServoAngle);
+      delay(10);
+    }
+    if (rightLimitSwitchRead == LOW) {
+      rightServoAngle++;
+      rightServo.write(rightServoAngle);
+      delay(10);
+    }
+    leftLimitSwitchRead = digitalRead(leftLimitSwitchPin);
+    rightLimitSwitchRead = digitalRead(rightLimitSwitchPin);
+    touched = (leftLimitSwitchRead == LOW || rightLimitSwitchRead == LOW) ? true : false;
+
+  } while (!touched);
+}
+
+void releaseBulbToTheEnd() {
+  bool released;
+  do {
+    if (leftServoAngle >= 1) {
+      leftServoAngle--;
+      leftServo.write(leftServoAngle);
+      delay(10);
+    }
+    if (rightServoAngle >= 1) {
+      rightServoAngle--;
+      rightServo.write(rightServoAngle);
+      delay(10);
+    }
+    released = (leftServoAngle == 0 || rightServoAngle == 0) ? true : false;
+  } while (!released);
+}
+
+void releaseBulbPartialy() {
+  int leftLimitSwitchRead = HIGH;
+  int rightLimitSwitchRead = HIGH;
+  bool touched;
+  do {
+    if (leftLimitSwitchRead == HIGH) {
+      leftServoAngle--;
+      leftServo.write(leftServoAngle);
+      delay(10);
+    }
+    if (rightLimitSwitchRead == HIGH) {
+      rightServoAngle--;
+      rightServo.write(rightServoAngle);
+      delay(10);
+    }
+    leftLimitSwitchRead = digitalRead(leftLimitSwitchPin);
+    rightLimitSwitchRead = digitalRead(rightLimitSwitchPin);
+    touched = (leftLimitSwitchRead == LOW || rightLimitSwitchRead == LOW) ? true : false;
+
+  } while (touched);
+}
+
+void turnOutTheBulb() {
+  for (int number = 0; number < TURNING_ITERS; number++) {
+    turnBulbOutEngine();
+    delay(TURNING_STEP);
+    stopTurning();
+    releaseBulbPartialy();
+    grabBulb();
+  }
+}
+
+void turnInTheBulb() {
+  for (int number = 0; number < TURNING_ITERS; number++) {
+    turnBulbInEngine();
+    delay(TURNING_STEP);
+    stopTurning();
+    releaseBulbPartialy();
+    grabBulb();
+  }
+  releaseBulbToTheEnd();
+}
+
+void pullBulb() {
+  moveKaretkaIn();
+  delay(KARETKA_TIME);
+  stopKaretka();
+
+  // chwyć żarówkę
+  grabBulb();
+
+  // odkręć żarówkę
+  turnOutTheBulb();
+
+  moveKaretkaOut();
+  delay(KARETKA_TIME);
+  stopKaretka();
+}
+
+void putBulb() {
+  moveKaretkaIn();
+  delay(KARETKA_TIME);
+  stopKaretka();
+
+  turnInTheBulb();
+
+  moveKaretkaOut();
+  delay(KARETKA_TIME);
+  stopKaretka();
+}
+
+
 
 void sendMSG(String message, int param) {
     message.replace("PARAM", String(param));
@@ -118,20 +271,20 @@ void iAmRobotMSG() {
 void setup() {
   pinMode(engine1_PIN1, OUTPUT);
   pinMode(engine1_PIN2, OUTPUT);
-  // pinMode(karetkaEngine_PIN1, OUTPUT);
-  // pinMode(karetkaEngine_PIN2, OUTPUT);
-  // pinMode(bulbTurnEngine_PIN1, OUTPUT);
-  // pinMode(bulbTurnEngine_PIN2, OUTPUT);
+  pinMode(karetkaEngine_PIN1, OUTPUT);
+  pinMode(karetkaEngine_PIN2, OUTPUT);
+  pinMode(bulbTurnEngine_PIN1, OUTPUT);
+  pinMode(bulbTurnEngine_PIN2, OUTPUT);
 
   pinMode(leftLimitSwitchPin, INPUT);
   pinMode(rightLimitSwitchPin, INPUT);
 
   digitalWrite(engine1_PIN1, LOW);
   digitalWrite(engine1_PIN2, LOW);
-  // digitalWrite(karetkaEngine_PIN1, LOW);
-  // digitalWrite(karetkaEngine_PIN2, LOW);
-  // digitalWrite(bulbTurnEngine_PIN1, LOW);
-  // digitalWrite(bulbTurnEngine_PIN2, LOW);
+  digitalWrite(karetkaEngine_PIN1, LOW);
+  digitalWrite(karetkaEngine_PIN2, LOW);
+  digitalWrite(bulbTurnEngine_PIN1, LOW);
+  digitalWrite(bulbTurnEngine_PIN2, LOW);
 
   Serial.begin(9600);
   if (!Serial) delay(3000);
@@ -170,9 +323,9 @@ void loop() {
     client.begin();
     delay(1000);
     Serial.println("Attempting to connect to server");
-    iAmRobotMSG();
+    if (client.connected()) { iAmRobotMSG();}
     // skip the rest of the loop:
-    return;
+    // return;
   }
   
   if (!inProcess) {
@@ -180,27 +333,24 @@ void loop() {
     int messageSize = client.parseMessage();
     // if there's a string with length > 0:
     if (messageSize > 0) {
-      if (ignoreNextMsgFromServer) {
-          ignoreNextMsgFromServer = false;
-        }
-        else {
-        Status = client.read();
+      Status = client.read();
+      if (Status == 1) {
+        internalState = START_CHECKING;
         Serial.print("Received a message:");
         Serial.println(Status);
-        if (Status == 1) {
-          internalState = START_CHECKING;
-        } 
-        else if (Status < 10) {
-          internalState = IDLE;
-        }
+      } 
+      else if (Status < 10) {
+        internalState = IDLE;
+        Serial.print("Received a message:");
+        Serial.println(Status);
       }
     }
   }
 
   if (millis() - lastSend > interval) {
     // read sensor:
-    int fototranzystorSensor = analogRead(A5);
-    int tcrt5000Sensor = analogRead(A1);
+    int fototranzystorSensor = analogRead(fotoresistorPIN);
+    int tcrt5000Sensor = analogRead(tcrt5000PIN);
     Serial.print("TRCT5000: ");
     Serial.println(tcrt5000Sensor);
     Serial.print("fototranzystorSensor: ");
@@ -223,25 +373,27 @@ void loop() {
         Serial.println("Moving Forward");
         // jedz do przodu po szynach
         moveForward();
+        delay(STEP_PERIOD);
+        stopMoving();
         
-        int tcrt5000BulbCheck = analogRead(A1);
+        int tcrt5000BulbCheck = analogRead(tcrt5000PIN);
         if (tcrt5000BulbCheck > 500) { // sprawdz czy jesteś przy żarówce
           if (!lastBulbCheck) { // sprawdz czy nie jestesmy przy tej samej żarówce
             Serial.println("Bulb detected");
-            bulbIndex++;  // zwiększ index sprawdzonej żarówki
-            sendMSG("{\"progress\": PARAM}", bulbIndex);
+            currentBulbIndex++;  // zwiększ index sprawdzonej żarówki
+            sendMSG("{\"progress\": PARAM}", currentBulbIndex);
             lastBulbCheck = true;
-            int fototranzystorLightCheck = analogRead(A5);
+            int fototranzystorLightCheck = analogRead(fotoresistorPIN);
             if (fototranzystorLightCheck < 100) { // jeśli żarówka się nie świeci internalState = PULL_BULB;
               Serial.println("Broken bulb found!");
-              sendMSG("{\"brokenBulbIndex\": PARAM}", bulbIndex);
+              sendMSG("{\"brokenBulbIndex\": PARAM}", currentBulbIndex);
               internalState = PULL_BULB;
               lastBulbCheck = false;
             }
-            else if (bulbIndex == LAST_BULB_INDEX) { // jeśli żarówka jest ok i osiągnąłeś ostatnią pozycję
+            else if (currentBulbIndex == LAST_BULB_INDEX) { // jeśli żarówka jest ok i osiągnąłeś ostatnią pozycję
               internalState = GET_BACK_TO_BASE;
             }
-          }
+          } else {Serial.println("Same bulb detected");}
         }
         else { // jeśli nie jesteśmy przy żarówce
           lastBulbCheck = false;
@@ -250,54 +402,101 @@ void loop() {
       }
       case PULL_BULB: {
         Serial.println("Pull up the bulb");
-        // chwyć żarówkę
-        leftServoAngle = 0;
-        rightServoAngle = 0;
-        int leftLimitSwitchRead = digitalRead(leftLimitSwitchPin);
-        int rightLimitSwitchRead = digitalRead(rightLimitSwitchPin);
-        while (leftLimitSwitchRead == LOW) {
-          leftServoAngle++;
-          leftServo.write(leftServoAngle);
-        }
-        while (rightLimitSwitchRead == LOW) {
-          rightServoAngle++;
-          rightServo.write(rightServoAngle);
-        }
-        // wykręć żarówkę
+        sendMSG("{\"pulledBulbIndex\": PARAM}", currentBulbIndex);
 
-        // podnieś żarówkę do góry
+        pullBulb();
+
         // wróć do bazy
         internalState = GO_BACKWARD;
+        goingToBaseBulbIndex = currentBulbIndex;
         break;
       }
       case GO_BACKWARD: {
         Serial.println("Go backward to change bulb");
         // wróć po nową żarówkę
         moveBackward();
-        // jeśli wróciłeś do bazy 
-        internalState = EXCHANGE_BULB;
-        sendMSG("{\"progress\": PARAM}", -1);
+        delay(STEP_PERIOD);
+        stopMoving();
+        // jeśli wróciłeś do bazy
+
+        int tcrt5000BulbCheck = analogRead(tcrt5000PIN);
+        if (tcrt5000BulbCheck > 500) { // sprawdz czy jesteś przy żarówce
+          if (!lastBulbCheck) { // sprawdz czy nie jestesmy przy tej samej żarówce
+            Serial.println("Bulb detected");
+            goingToBaseBulbIndex--;  // zwiększ index sprawdzonej żarówki
+            lastBulbCheck = true;
+            if (goingToBaseBulbIndex == -2) {
+              lastBulbCheck = false;
+              internalState = EXCHANGE_BULB;
+            }
+          }
+        }
+        else {
+          lastBulbCheck = false;
+        }
+        sendMSG("{\"progress\": PARAM}", goingToBaseBulbIndex);
         break;
       }
       case EXCHANGE_BULB: {
-        Serial.println("Exchange the bulb");
         // odłóż starą żarówkę
-        // weź nową
-        internalState = GET_BACK_TO_BROKEN_BULB;
+        Serial.println("Exchange the bulb");
+        sendMSG("{\"progress\": PARAM}", -2);
+
+        putBulb();
+
+        internalState = GET_NEW_BULB;
+        break;
+      }
+      case GET_NEW_BULB: {
+        moveForward();
+        delay(STEP_PERIOD);
+        stopMoving();
+
+        int tcrt5000BulbCheck = analogRead(tcrt5000PIN);
+        if (tcrt5000BulbCheck > 500) { // sprawdz czy jesteś w bazie (pierwszy napotkany point po punkcie -2)
+            Serial.println("Back in base");
+            sendMSG("{\"progress\": PARAM}", -1);
+            
+            pullBulb();
+
+            internalState = GET_BACK_TO_BROKEN_BULB;
+        }
         break;
       }
       case GET_BACK_TO_BROKEN_BULB: {
-        moveForward();
-        Serial.println("Get back to broken bulb");
         // wróć do lokalizacji z której żarówka została wyjęta
-        internalState = REPLACING_BULB;
+        Serial.println("Get back to broken bulb");
+        moveForward();
+        delay(STEP_PERIOD);
+        stopMoving();
+
+        int tcrt5000BulbCheck = analogRead(tcrt5000PIN);
+        if (tcrt5000BulbCheck > 500) { // sprawdz czy jesteś przy żarówce
+          if (!lastBulbCheck) { // sprawdz czy nie jestesmy przy tej samej żarówce
+            Serial.println("Bulb detected");
+            backBulbIndex++;  // zwiększ index sprawdzonej żarówki
+            sendMSG("{\"progress\": PARAM}", backBulbIndex);
+            lastBulbCheck = true;
+            if (backBulbIndex == currentBulbIndex) {
+              lastBulbCheck = false;
+              internalState = REPLACING_BULB;
+            }
+          }
+        }
+        else {
+          lastBulbCheck = false;
+        }
         break;
       }
       case REPLACING_BULB: {
-        Serial.println("Replacing the bulb");
         // wsadź nową żarówkę
+        Serial.println("Replacing the bulb");
+        sendMSG("{\"replacedBulbIndex\": PARAM}", currentBulbIndex);
+
+        putBulb();
+
         // jeśli to była ostatnia żarówka - wróć do bazy
-        if (bulbIndex == LAST_BULB_INDEX) {
+        if (currentBulbIndex == LAST_BULB_INDEX) {
           internalState = GET_BACK_TO_BASE;
         }
         else {
@@ -326,25 +525,13 @@ void loop() {
     lastSend = millis();
   }
 
-  int limitSwitchRead = digitalRead(leftLimitSwitchPin);
-  if (limitSwitchRead == HIGH) {
-    Serial.println("TOUCHED");
-  }
-  else {
-    Serial.println("UNTOUCHED");
-  }
-  delay(2000);
-
-  // for(leftServoAngle = 0; leftServoAngle < 180; leftServoAngle++) //przekręć serwo od 0 stopni do 180 stopni
-  // {
-  //   leftServo.write(leftServoAngle);
-  //   delay(30);
+  // int limitSwitchRead = digitalRead(leftLimitSwitchPin);
+  // if (limitSwitchRead == HIGH) {
+  //   Serial.println("TOUCHED");
   // }
-
-  // for(leftServoAngle = 180; leftServoAngle > 0; leftServoAngle--) //teraz cofnij mikro serwo od 0 stopni do 180 stopni
-  // {
-  //   leftServo.write(leftServoAngle);
-  //   delay(30);
+  // else {
+  //   Serial.println("UNTOUCHED");
   // }
+  // delay(2000);
 
 }
