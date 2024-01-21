@@ -24,9 +24,9 @@
 // settings for a test on postman.com's websocket echo server
 // set up a WiFi client ( using SSL):
 WiFiSSLClient wifi;
-char serverAddress[] = "bitehack-bulbulator-server.up.railway.app";
-int port = 443;           // standard HTTPS port
-char endpoint[] = "/raw";
+const char serverAddress[] = "bitehack-bulbulator-server.up.railway.app";
+const int port = 443;           // standard HTTPS port
+ char endpoint[] = "/raw";
 // initialize the webSocket client
 WebSocketClient client = WebSocketClient(wifi, serverAddress, port);
 
@@ -39,12 +39,22 @@ const int rightServoPin = 7; // pin sterujący Arduino
 Servo rightServo;
 int rightServoAngle = 0; // pozycja startowa serwa w stopniach
 
-/* ENGINE */
+const int leftLimitSwitchPin = 12;
+const int rightLimitSwitchPin = 13;
+
+/* ENGINES */
 const int engine1_PIN1 = 2;
 const int engine1_PIN2 = 3;
 
 const int engine2_PIN1 = 8;
 const int engine2_PIN2 = 9;
+
+/* KARETKA ENGINES */
+const int karetkaEngine_PIN1;
+const int karetkaEngine_PIN2;
+
+const int bulbTurnEngine_PIN1;
+const int bulbTurnEngine_PIN2;
 
 /* GENERAL */
 // message sending interval, in ms:
@@ -52,16 +62,13 @@ int interval = 3000;
 // last time a message was sent, in ms:
 long lastSend = 0;
 int Status;
-int internal_state = IDLE;
+int internalState = IDLE;
 int bulbIndex = 0;
 bool lastBulbCheck = false;
 int bulbsChecked[LAST_BULB_INDEX] = {0};
 
 bool ignoreNextMsgFromServer = false;
-bool in_process = false;
-
-const int leftLimitSwitchPin = 12;
-const int rightLimitSwitchPin = 13;
+bool inProcess = false;
 
 
 
@@ -111,11 +118,20 @@ void iAmRobotMSG() {
 void setup() {
   pinMode(engine1_PIN1, OUTPUT);
   pinMode(engine1_PIN2, OUTPUT);
+  // pinMode(karetkaEngine_PIN1, OUTPUT);
+  // pinMode(karetkaEngine_PIN2, OUTPUT);
+  // pinMode(bulbTurnEngine_PIN1, OUTPUT);
+  // pinMode(bulbTurnEngine_PIN2, OUTPUT);
+
   pinMode(leftLimitSwitchPin, INPUT);
   pinMode(rightLimitSwitchPin, INPUT);
 
   digitalWrite(engine1_PIN1, LOW);
   digitalWrite(engine1_PIN2, LOW);
+  // digitalWrite(karetkaEngine_PIN1, LOW);
+  // digitalWrite(karetkaEngine_PIN2, LOW);
+  // digitalWrite(bulbTurnEngine_PIN1, LOW);
+  // digitalWrite(bulbTurnEngine_PIN2, LOW);
 
   Serial.begin(9600);
   if (!Serial) delay(3000);
@@ -138,10 +154,10 @@ void setup() {
   Serial.println(ip);
   // If there's an API endpoint to connect to, add it here.
   // leave blank if there's no endpoint:
-  int connect_status;
-  connect_status = client.begin(endpoint);
+  int connectStatus;
+  connectStatus = client.begin(endpoint);
   Serial.print("Status: ");
-  Serial.println(connect_status);
+  Serial.println(connectStatus);
   iAmRobotMSG();
 
   leftServo.attach(leftServoPin);
@@ -159,7 +175,7 @@ void loop() {
     return;
   }
   
-  if (!in_process) {
+  if (!inProcess) {
     // check if a message is available to be received
     int messageSize = client.parseMessage();
     // if there's a string with length > 0:
@@ -172,10 +188,10 @@ void loop() {
         Serial.print("Received a message:");
         Serial.println(Status);
         if (Status == 1) {
-          internal_state = START_CHECKING;
+          internalState = START_CHECKING;
         } 
         else if (Status < 10) {
-          internal_state = IDLE;
+          internalState = IDLE;
         }
       }
     }
@@ -183,24 +199,24 @@ void loop() {
 
   if (millis() - lastSend > interval) {
     // read sensor:
-    int fototranzystor_sensor = analogRead(A5);
-    int tcrt5000_sensor = analogRead(A1);
+    int fototranzystorSensor = analogRead(A5);
+    int tcrt5000Sensor = analogRead(A1);
     Serial.print("TRCT5000: ");
-    Serial.println(tcrt5000_sensor);
-    Serial.print("fototranzystor_sensor: ");
-    Serial.println(fototranzystor_sensor);
+    Serial.println(tcrt5000Sensor);
+    Serial.print("fototranzystorSensor: ");
+    Serial.println(fototranzystorSensor);
 
-    sendMSG("{\"state\": PARAM}", internal_state);
-    switch (internal_state) {
+    sendMSG("{\"state\": PARAM}", internalState);
+    switch (internalState) {
       case IDLE: {
         Serial.println("IDLE state");
         break;
       }
       case START_CHECKING: {
         Serial.println("Start checking");
-        in_process = true;
+        inProcess = true;
         interval = 1000;
-        internal_state = MOVE_FORWARD;
+        internalState = MOVE_FORWARD;
         break;
       }
       case MOVE_FORWARD: {
@@ -208,22 +224,22 @@ void loop() {
         // jedz do przodu po szynach
         moveForward();
         
-        int tcrt5000_bulbCheck = analogRead(A1);
-        if (tcrt5000_bulbCheck > 500) { // sprawdz czy jesteś przy żarówce
+        int tcrt5000BulbCheck = analogRead(A1);
+        if (tcrt5000BulbCheck > 500) { // sprawdz czy jesteś przy żarówce
           if (!lastBulbCheck) { // sprawdz czy nie jestesmy przy tej samej żarówce
             Serial.println("Bulb detected");
             bulbIndex++;  // zwiększ index sprawdzonej żarówki
             sendMSG("{\"progress\": PARAM}", bulbIndex);
             lastBulbCheck = true;
-            int fototranzystor_lightCheck = analogRead(A5);
-            if (fototranzystor_lightCheck < 100) { // jeśli żarówka się nie świeci internal_state = PULL_BULB;
+            int fototranzystorLightCheck = analogRead(A5);
+            if (fototranzystorLightCheck < 100) { // jeśli żarówka się nie świeci internalState = PULL_BULB;
               Serial.println("Broken bulb found!");
               sendMSG("{\"brokenBulbIndex\": PARAM}", bulbIndex);
-              internal_state = PULL_BULB;
+              internalState = PULL_BULB;
               lastBulbCheck = false;
             }
             else if (bulbIndex == LAST_BULB_INDEX) { // jeśli żarówka jest ok i osiągnąłeś ostatnią pozycję
-              internal_state = GET_BACK_TO_BASE;
+              internalState = GET_BACK_TO_BASE;
             }
           }
         }
@@ -237,13 +253,21 @@ void loop() {
         // chwyć żarówkę
         leftServoAngle = 0;
         rightServoAngle = 0;
-        // while ()
-
+        int leftLimitSwitchRead = digitalRead(leftLimitSwitchPin);
+        int rightLimitSwitchRead = digitalRead(rightLimitSwitchPin);
+        while (leftLimitSwitchRead == LOW) {
+          leftServoAngle++;
+          leftServo.write(leftServoAngle);
+        }
+        while (rightLimitSwitchRead == LOW) {
+          rightServoAngle++;
+          rightServo.write(rightServoAngle);
+        }
         // wykręć żarówkę
 
         // podnieś żarówkę do góry
         // wróć do bazy
-        internal_state = GO_BACKWARD;
+        internalState = GO_BACKWARD;
         break;
       }
       case GO_BACKWARD: {
@@ -251,7 +275,7 @@ void loop() {
         // wróć po nową żarówkę
         moveBackward();
         // jeśli wróciłeś do bazy 
-        internal_state = EXCHANGE_BULB;
+        internalState = EXCHANGE_BULB;
         sendMSG("{\"progress\": PARAM}", -1);
         break;
       }
@@ -259,14 +283,14 @@ void loop() {
         Serial.println("Exchange the bulb");
         // odłóż starą żarówkę
         // weź nową
-        internal_state = GET_BACK_TO_BROKEN_BULB;
+        internalState = GET_BACK_TO_BROKEN_BULB;
         break;
       }
       case GET_BACK_TO_BROKEN_BULB: {
         moveForward();
         Serial.println("Get back to broken bulb");
         // wróć do lokalizacji z której żarówka została wyjęta
-        internal_state = REPLACING_BULB;
+        internalState = REPLACING_BULB;
         break;
       }
       case REPLACING_BULB: {
@@ -274,10 +298,10 @@ void loop() {
         // wsadź nową żarówkę
         // jeśli to była ostatnia żarówka - wróć do bazy
         if (bulbIndex == LAST_BULB_INDEX) {
-          internal_state = GET_BACK_TO_BASE;
+          internalState = GET_BACK_TO_BASE;
         }
         else {
-          internal_state = MOVE_FORWARD;
+          internalState = MOVE_FORWARD;
         }
         // jeśli nie, idź do move forward
         break;
@@ -286,8 +310,8 @@ void loop() {
         // wróć do bazy
         // moveBackward();
         // jeśli w Bazie:
-        in_process = false;
-        internal_state = IDLE;
+        inProcess = false;
+        internalState = IDLE;
         interval = 3000;
         stopMoving();
         sendMSG("{\"progress\": PARAM}", -1);
@@ -302,14 +326,14 @@ void loop() {
     lastSend = millis();
   }
 
-  // int limitSwitchRead = digitalRead(limitSwitchPin);
-  // if (limitSwitchRead == HIGH) {
-  //   Serial.println("TOUCHED");
-  // }
-  // else {
-  //   Serial.println("UNTOUCHED");
-  // }
-  // delay(2000);
+  int limitSwitchRead = digitalRead(leftLimitSwitchPin);
+  if (limitSwitchRead == HIGH) {
+    Serial.println("TOUCHED");
+  }
+  else {
+    Serial.println("UNTOUCHED");
+  }
+  delay(2000);
 
   // for(leftServoAngle = 0; leftServoAngle < 180; leftServoAngle++) //przekręć serwo od 0 stopni do 180 stopni
   // {
